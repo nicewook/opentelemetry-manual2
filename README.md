@@ -1,5 +1,9 @@
 # 수동으로 trace 해보기
 
+원본 코드를 조금 수정하여  작업함
+
+[원본 코드 링크](https://github.com/wavefrontHQ/opentelemetry-examples/blob/master/go-example/manual-instrumentation/main.go)
+
 ## 실습
 
 1. docker compose up

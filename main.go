@@ -4,49 +4,17 @@ import (
 	"context"
 	"errors"
 	"log"
-	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/exporters/jaeger"
-	"go.opentelemetry.io/otel/exporters/otlp/otlptrace"
-	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.7.0"
 	"go.opentelemetry.io/otel/trace"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 )
-
-func initTracer() func() {
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-
-	res, err := newResource(ctx)
-	reportErr(err, "failed to create res")
-
-	conn, err := grpc.DialContext(ctx, "localhost:4317", grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithBlock())
-	reportErr(err, "failed to create gRPC connection to collector")
-
-	// Set up a trace exporter
-	traceExporter, err := newExporter(ctx, conn)
-	reportErr(err, "failed to create trace exporter")
-
-	// Register the trace exporter with a TracerProvider, using a batch
-	// span processor to aggregate spans before export.
-	batchSpanProcessor := sdktrace.NewBatchSpanProcessor(traceExporter)
-	tracerProvider := newTraceProvider(res, batchSpanProcessor)
-	otel.SetTracerProvider(tracerProvider)
-
-	return func() {
-		// Shutdown will flush any remaining spans and shut down the exporter.
-		reportErr(tracerProvider.Shutdown(ctx), "failed to shutdown TracerProvider")
-		cancel()
-	}
-}
 
 func initJaegerTracer() func() {
 	tp, err := JaegerTraceProvider()
@@ -57,7 +25,9 @@ func initJaegerTracer() func() {
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}))
 
 	return func() {
-		reportErr(tp.Shutdown(context.Background()), "failed to shutdown TracerProvider")
+		if err := tp.Shutdown(context.Background()); err != nil {
+			log.Printf("failed to shutdown TracerProvider: %v", err)
+		}
 	}
 }
 func JaegerTraceProvider() (*sdktrace.TracerProvider, error) {
@@ -69,61 +39,27 @@ func JaegerTraceProvider() (*sdktrace.TracerProvider, error) {
 		sdktrace.WithBatcher(exp),
 		sdktrace.WithResource(resource.NewWithAttributes(
 			semconv.SchemaURL,
-			semconv.ServiceNameKey.String("todo-service"),
-			semconv.DeploymentEnvironmentKey.String("production"),
+			semconv.ServiceNameKey.String("manual-service"),
+			semconv.DeploymentEnvironmentKey.String("manual-env"),
 		)),
 	)
 	return tp, nil
 }
 
-func newTraceProvider(res *resource.Resource, bsp sdktrace.SpanProcessor) *sdktrace.TracerProvider {
-	tracerProvider := sdktrace.NewTracerProvider(
-		sdktrace.WithSampler(sdktrace.AlwaysSample()),
-		sdktrace.WithResource(res),
-		sdktrace.WithSpanProcessor(bsp),
-	)
-	return tracerProvider
-}
-
-func newExporter(ctx context.Context, conn *grpc.ClientConn) (*otlptrace.Exporter, error) {
-	return otlptracegrpc.New(ctx, otlptracegrpc.WithGRPCConn(conn))
-}
-
-func newResource(ctx context.Context) (*resource.Resource, error) {
-	return resource.New(ctx,
-		resource.WithAttributes(
-			// the service name used to display traces in backends
-			semconv.ServiceNameKey.String("otel-otlp-go-service"),
-			attribute.String("application", "otel-otlp-go-app"),
-		),
-	)
-}
-
-func reportErr(err error, message string) {
-	if err != nil {
-		log.Printf("%s: %v", message, err)
-	}
-}
-
 func main() {
 
-	log.Printf("Waiting for connection...")
-
 	shutdown := initJaegerTracer()
-	// shutdown := initTracer()
-
 	defer shutdown()
 
-	tracer := otel.GetTracerProvider().Tracer("demo1TracerName")
+	basicTracer := otel.GetTracerProvider().Tracer("basic-tracer")
+	exceptionTracer := otel.GetTracerProvider().Tracer("exception-tracer")
 	ctx := context.Background()
 
 	// work begins
-	parentFunction(ctx, tracer)
+	parentFunction(ctx, basicTracer)
 
 	// bonus work
-	exceptionFunction(ctx, tracer)
-
-	log.Printf("Done!")
+	exceptionFunction(ctx, exceptionTracer)
 }
 
 func parentFunction(ctx context.Context, tracer trace.Tracer) {
